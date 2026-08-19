@@ -1,104 +1,244 @@
 import { Project, HydraulicResult } from "@/types/project";
+import { calculateLayout, Point, SchematicLayout } from "@/lib/layout-engine";
 
-const esc = (s: string) => s.replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;");
-const T = (x:number,y:number,s:string,size=13,anchor="start", cls="txt") => `<text x="${x}" y="${y}" font-size="${size}" text-anchor="${anchor}" class="${cls}">${esc(s)}</text>`;
-const box=(x:number,y:number,w:number,h:number)=>`<rect x="${x}" y="${y}" width="${w}" height="${h}" class="box"/>`;
+const esc = (s: string) =>
+  String(s)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
 
-// ---- pipe rendering (double-line "tube" style instead of thin single lines) ----
-const PIPE_FILL: Record<string,string> = { pipeBlue:"url(#bluePipe)", pipeGreen:"url(#pehdPattern)", pipeOrange:"url(#orangePipe)" };
-const PIPE_STROKE: Record<string,string> = { pipeBlue:"#0d2fa8", pipeGreen:"#2f7d00", pipeOrange:"#c95c00" };
-const PIPE_WIDTH: Record<string,number> = { pipeBlue:12, pipeGreen:12, pipeOrange:8 };
+const T = (
+  x: number,
+  y: number,
+  s: string,
+  size = 13,
+  anchor = "start",
+  cls = "txt"
+) =>
+  `<text x="${x}" y="${y}" font-size="${size}" text-anchor="${anchor}" class="${cls}">${esc(s)}</text>`;
 
-const L = (x1:number,y1:number,x2:number,y2:number,cls="pipeBlue") => {
-  const th = PIPE_WIDTH[cls] ?? 9;
-  const dx=x2-x1, dy=y2-y1;
-  const len=Math.hypot(dx,dy)||1;
-  const px=-dy/len*th/2, py=dx/len*th/2;
-  const pts=[[x1+px,y1+py],[x2+px,y2+py],[x2-px,y2-py],[x1-px,y1-py]].map(pt=>pt.join(",")).join(" ");
-  const highlight = cls==="pipeBlue" && y1===y2
-    ? `<line x1="${x1}" y1="${y1-th*0.2}" x2="${x2}" y2="${y2-th*0.2}" stroke="#8fb0ff" stroke-width="${Math.max(1.5,th*0.18)}" stroke-linecap="round" opacity="0.75"/>`
-    : "";
-  return `<g><polygon points="${pts}" fill="${PIPE_FILL[cls] ?? "#999"}" stroke="${PIPE_STROKE[cls] ?? "#333"}" stroke-width="1.6" stroke-linejoin="round"/>${highlight}</g>`;
+const box = (x: number, y: number, w: number, h: number, cls = "box") =>
+  `<rect x="${x}" y="${y}" width="${w}" height="${h}" class="${cls}"/>`;
+
+type PipeClass = "pipeBlue" | "pipeGreen" | "pipeOrange";
+
+const PIPE_WIDTH: Record<PipeClass, number> = {
+  pipeBlue: 12,
+  pipeGreen: 12,
+  pipeOrange: 8,
 };
 
-// small flange/elbow marker at pipe joints and direction changes
-const J = (x:number,y:number) => `<rect x="${x-5}" y="${y-5}" width="10" height="10" fill="#222" stroke="#000" stroke-width="0.5" rx="1"/>`;
+const PIPE_FILL: Record<PipeClass, string> = {
+  pipeBlue: "url(#bluePipe)",
+  pipeGreen: "url(#pehdPattern)",
+  pipeOrange: "url(#orangePipe)",
+};
 
-// isolation valve — clean bowtie (no flanges, crisper at small scale)
-const V = (x:number,y:number) => `<g class="sym">
-  <path d="M${x-11} ${y-12}L${x} ${y}L${x-11} ${y+12}Z" fill="#fff" stroke="#111" stroke-width="2.2"/>
-  <path d="M${x+11} ${y-12}L${x} ${y}L${x+11} ${y+12}Z" fill="#fff" stroke="#111" stroke-width="2.2"/>
+const PIPE_STROKE: Record<PipeClass, string> = {
+  pipeBlue: "#123fc4",
+  pipeGreen: "#2f7d00",
+  pipeOrange: "#d36a00",
+};
+
+function segment(
+  a: Point,
+  b: Point,
+  cls: PipeClass = "pipeBlue",
+  arrow = false
+) {
+  const th = PIPE_WIDTH[cls];
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const len = Math.hypot(dx, dy) || 1;
+  const px = (-dy / len) * th / 2;
+  const py = (dx / len) * th / 2;
+
+  const pts = [
+    [a.x + px, a.y + py],
+    [b.x + px, b.y + py],
+    [b.x - px, b.y - py],
+    [a.x - px, a.y - py],
+  ]
+    .map((p) => p.join(","))
+    .join(" ");
+
+  const highlight =
+    cls === "pipeBlue"
+      ? `<line x1="${a.x}" y1="${a.y - th * 0.18}" x2="${b.x}" y2="${b.y - th * 0.18}" stroke="#9ab2ff" stroke-width="2" opacity=".72"/>`
+      : "";
+
+  const arrowSvg = arrow
+    ? `<polygon points="${b.x},${b.y} ${b.x - dx / len * 16 + dy / len * 7},${b.y - dy / len * 16 - dx / len * 7} ${b.x - dx / len * 16 - dy / len * 7},${b.y - dy / len * 16 + dx / len * 7}" fill="${PIPE_STROKE[cls]}"/>`
+    : "";
+
+  return `<g><polygon points="${pts}" fill="${PIPE_FILL[cls]}" stroke="${PIPE_STROKE[cls]}" stroke-width="1.6" stroke-linejoin="round"/>${highlight}${arrowSvg}</g>`;
+}
+
+function pipe(
+  points: Point[],
+  cls: PipeClass = "pipeBlue",
+  arrowAtEnd = false
+) {
+  return points
+    .slice(0, -1)
+    .map((p, i) =>
+      segment(p, points[i + 1], cls, arrowAtEnd && i === points.length - 2)
+    )
+    .join("");
+}
+
+const J = (x: number, y: number) =>
+  `<rect x="${x - 5}" y="${y - 5}" width="10" height="10" rx="1" fill="#222" stroke="#000" stroke-width=".6"/>`;
+
+const V = (x: number, y: number, vertical = false) => {
+  const rot = vertical ? ` transform="rotate(90 ${x} ${y})"` : "";
+  return `<g class="sym"${rot}>
+    <path d="M${x - 12} ${y - 12}L${x} ${y}L${x - 12} ${y + 12}Z" fill="#fff"/>
+    <path d="M${x + 12} ${y - 12}L${x} ${y}L${x + 12} ${y + 12}Z" fill="#fff"/>
+  </g>`;
+};
+
+const C = (x: number, y: number, vertical = false) => {
+  const rot = vertical ? ` transform="rotate(90 ${x} ${y})"` : "";
+  return `<g class="sym"${rot}>
+    <path d="M${x - 11} ${y - 12}L${x + 10} ${y}L${x - 11} ${y + 12}Z" fill="#fff"/>
+    <line x1="${x + 11}" y1="${y - 14}" x2="${x + 11}" y2="${y + 14}"/>
+  </g>`;
+};
+
+function pumpSVG(x: number, y: number, label: string) {
+  return `<g>
+    <rect x="${x - 27}" y="${y - 40}" width="54" height="80" rx="9" fill="url(#pumpGrad)" stroke="#7b1018" stroke-width="3"/>
+    <rect x="${x - 19}" y="${y - 61}" width="38" height="24" rx="5" fill="#777" stroke="#333" stroke-width="2"/>
+    <circle cx="${x}" cy="${y - 49}" r="7" fill="#e8e8e8" stroke="#333" stroke-width="1.5"/>
+    <path d="M${x - 15} ${y + 8} Q${x} ${y - 18} ${x + 15} ${y + 8}" fill="none" stroke="#fff" stroke-width="4"/>
+    <path d="M${x + 7} ${y + 1} L${x + 18} ${y + 9} L${x + 5} ${y + 12}" fill="none" stroke="#fff" stroke-width="4"/>
+    <text x="${x}" y="${y + 63}" text-anchor="middle" class="pumpLabel">${esc(label)}</text>
+  </g>`;
+}
+
+const dimH = (x1: number, x2: number, y: number, label: string) => `<g class="dimension">
+  <line x1="${x1}" y1="${y}" x2="${x2}" y2="${y}"/>
+  <line x1="${x1}" y1="${y - 7}" x2="${x1}" y2="${y + 7}"/>
+  <line x1="${x2}" y1="${y - 7}" x2="${x2}" y2="${y + 7}"/>
+  <polygon points="${x1},${y} ${x1 + 9},${y - 4} ${x1 + 9},${y + 4}"/>
+  <polygon points="${x2},${y} ${x2 - 9},${y - 4} ${x2 - 9},${y + 4}"/>
+  ${T((x1 + x2) / 2, y - 9, label, 14, "middle", "dimText")}
 </g>`;
 
-// check valve — triangle + stop bar
-const C = (x:number,y:number) => `<g class="sym">
-  <path d="M${x-10} ${y-11}L${x+9} ${y}L${x-10} ${y+11}Z" fill="#fff" stroke="#111" stroke-width="2.2"/>
-  <line x1="${x+10}" y1="${y-13}" x2="${x+10}" y2="${y+13}" stroke="#111" stroke-width="2.6"/>
+const dimV = (x: number, y1: number, y2: number, label: string) => `<g class="dimension">
+  <line x1="${x}" y1="${y1}" x2="${x}" y2="${y2}"/>
+  <line x1="${x - 7}" y1="${y1}" x2="${x + 7}" y2="${y1}"/>
+  <line x1="${x - 7}" y1="${y2}" x2="${x + 7}" y2="${y2}"/>
+  <polygon points="${x},${y1} ${x - 4},${y1 + 9} ${x + 4},${y1 + 9}"/>
+  <polygon points="${x},${y2} ${x - 4},${y2 - 9} ${x + 4},${y2 - 9}"/>
+  ${T(x + 17, (y1 + y2) / 2, label, 14, "middle", "dimText")}
 </g>`;
 
-// pump with radial shading
-const P = (x:number,y:number,label:string) => `<g><circle cx="${x}" cy="${y}" r="28" fill="url(#pumpGrad)" stroke="#7a0e14" stroke-width="3"/><path d="M${x-13} ${y+7}Q${x} ${y-15} ${x+15} ${y+4}" stroke="#fff" stroke-width="4" fill="none"/><path d="M${x+8} ${y-5}L${x+17} ${y+4}L${x+5} ${y+8}" stroke="#fff" stroke-width="4" fill="none"/><text x="${x}" y="${y+51}" text-anchor="middle" class="pumpLabel">${esc(label)}</text></g>`;
+function tankSVG(
+  layout: SchematicLayout["tank"],
+  p: Project
+) {
+  const { x, y, w, h, roofSkewX, roofSkewY } = layout;
+  const waterY = y + h * 0.60;
+  const roof = `${x},${y} ${x + w},${y} ${x + w + roofSkewX},${y + roofSkewY} ${x + roofSkewX},${y + roofSkewY}`;
+  const hatchX = x + w * 0.34;
+  const hatchY = y + roofSkewY + 22;
 
-// dimension lines with arrowheads (technical drafting style)
-const dimH = (x1:number,x2:number,y:number,label:string) => `<g>
-  <line x1="${x1}" y1="${y}" x2="${x2}" y2="${y}" stroke="#c21f2b" stroke-width="1.5"/>
-  <line x1="${x1}" y1="${y-7}" x2="${x1}" y2="${y+7}" stroke="#c21f2b" stroke-width="1.5"/>
-  <line x1="${x2}" y1="${y-7}" x2="${x2}" y2="${y+7}" stroke="#c21f2b" stroke-width="1.5"/>
-  <polygon points="${x1},${y} ${x1+9},${y-4} ${x1+9},${y+4}" fill="#c21f2b"/>
-  <polygon points="${x2},${y} ${x2-9},${y-4} ${x2-9},${y+4}" fill="#c21f2b"/>
-  ${T((x1+x2)/2,y-9,label,15,"middle","dim")}
-</g>`;
-const dimV = (x:number,y1:number,y2:number,label:string) => `<g>
-  <line x1="${x}" y1="${y1}" x2="${x}" y2="${y2}" stroke="#c21f2b" stroke-width="1.5"/>
-  <line x1="${x-7}" y1="${y1}" x2="${x+7}" y2="${y1}" stroke="#c21f2b" stroke-width="1.5"/>
-  <line x1="${x-7}" y1="${y2}" x2="${x+7}" y2="${y2}" stroke="#c21f2b" stroke-width="1.5"/>
-  <polygon points="${x},${y1} ${x-4},${y1+9} ${x+4},${y1+9}" fill="#c21f2b"/>
-  <polygon points="${x},${y2} ${x-4},${y2-9} ${x+4},${y2-9}" fill="#c21f2b"/>
-  ${T(x+16,(y1+y2)/2,label,15,"middle","dim")}
-</g>`;
+  let s = `<g class="tank">`;
+  s += `<polygon points="${x + w},${y} ${x + w + roofSkewX},${y + roofSkewY} ${x + w + roofSkewX},${y + roofSkewY + h} ${x + w},${y + h}" fill="#edf5ff" stroke="#5b93e0" stroke-width="2"/>`;
+  s += `<rect x="${x}" y="${y}" width="${w}" height="${h}" fill="#fbfdff" stroke="#5b93e0" stroke-width="2.5"/>`;
+  s += `<rect x="${x + 2}" y="${waterY}" width="${w - 4}" height="${h - (waterY - y) - 2}" fill="url(#waterGrad)"/>`;
+  s += `<line x1="${x + 2}" y1="${waterY}" x2="${x + w - 2}" y2="${waterY}" stroke="#76c4f4" stroke-width="2"/>`;
+  s += `<polygon points="${roof}" fill="#f2f9ff" stroke="#5b93e0" stroke-width="2.5"/>`;
+  s += `<rect x="${hatchX}" y="${hatchY}" width="100" height="46" fill="url(#hatchPattern)" stroke="#5b93e0" stroke-width="2"/>`;
+  s += T(hatchX + 50, hatchY + 29, "TRAPPE", 11, "middle", "tankText");
+  s += T(x + w / 2, y + h / 2 + 8, `${p.tank.capacityM3} m³`, 22, "middle", "tankCapacity");
+  s += T(x + w / 2, y + h / 2 + 31, "BÂCHE DE REPRISE", 12, "middle", "tankText");
+  s += `</g>`;
+  return s;
+}
 
-// tank drawn in pseudo-3D (roof + side face + front face + water fill), like the reference plan
-function tankSVG(tank:{x:number,y:number,w:number,h:number}) {
-  const {x,y,w,h}=tank;
-  const skx=75, sky=-58;
-  const topPts = `${x},${y} ${x+w},${y} ${x+w+skx},${y+sky} ${x+skx},${y+sky}`;
-  const waterY = y + h*0.62;
-  let out = `<g>`;
-  out += `<polygon points="${x+w},${y} ${x+w+skx},${y+sky} ${x+w+skx},${y+sky+h} ${x+w},${y+h}" fill="#eaf4ff" stroke="#5b93e0" stroke-width="2"/>`;
-  out += `<rect x="${x}" y="${y}" width="${w}" height="${h}" fill="#fbfdff" stroke="#5b93e0" stroke-width="2.5"/>`;
-  out += `<rect x="${x+2}" y="${waterY}" width="${w-4}" height="${y+h-waterY-2}" fill="url(#waterGrad)"/>`;
-  out += `<line x1="${x+2}" y1="${waterY}" x2="${x+w-2}" y2="${waterY}" stroke="#8fd0ff" stroke-width="2"/>`;
-  out += `<polygon points="${topPts}" fill="#f2f9ff" stroke="#5b93e0" stroke-width="2.5"/>`;
-  const tw=95, thh=45, tx=x+70, ty=y+sky+18;
-  out += `<rect x="${tx}" y="${ty}" width="${tw}" height="${thh}" fill="url(#hatchPattern)" stroke="#5b93e0" stroke-width="2"/>`;
-  out += T(tx+tw/2, ty+thh/2+4, "TRAPPE", 11, "middle");
-  out += "</g>";
-  return out;
+function controlPanelSVG(x: number, y: number, w: number, h: number) {
+  let s = `<g>`;
+  s += box(x, y, w, h);
+  s += `<rect x="${x + 20}" y="${y + 22}" width="30" height="18" fill="#fff" stroke="#222"/>`;
+  for (let i = 0; i < 18; i++) {
+    const cx = x + 75 + (i % 3) * 30;
+    const cy = y + 31 + Math.floor(i / 3) * 20;
+    const fill = i % 5 === 0 ? "#dc2626" : i % 7 === 0 ? "#f0b400" : "#16a34a";
+    s += `<circle cx="${cx}" cy="${cy}" r="6" fill="${fill}" stroke="#222" stroke-width="1"/>`;
+  }
+  s += T(x + w / 2, y + h + 20, "COFFRET DE COMMANDE", 11, "middle", "txt");
+  s += `</g>`;
+  return s;
+}
+
+function gaugeSVG(x: number, y: number) {
+  return `<g>
+    <circle cx="${x}" cy="${y}" r="20" fill="#fff" stroke="#111" stroke-width="2.5"/>
+    <path d="M${x - 11} ${y + 8} A14 14 0 0 1 ${x + 11} ${y + 8}" fill="none" stroke="#222" stroke-width="1.5"/>
+    <line x1="${x}" y1="${y}" x2="${x + 8}" y2="${y - 8}" stroke="#111" stroke-width="2"/>
+    ${T(x, y - 28, "MANOMÈTRE", 9, "middle")}
+  </g>`;
+}
+
+function vesselSVG(x: number, y: number, liters: number) {
+  return `<g>
+    <ellipse cx="${x}" cy="${y}" rx="34" ry="54" fill="url(#vesselGrad)" stroke="#8f1018" stroke-width="3"/>
+    <rect x="${x - 8}" y="${y - 65}" width="16" height="12" fill="#666" stroke="#333"/>
+    <line x1="${x - 24}" y1="${y + 54}" x2="${x - 24}" y2="${y + 67}" stroke="#333" stroke-width="4"/>
+    <line x1="${x + 24}" y1="${y + 54}" x2="${x + 24}" y2="${y + 67}" stroke="#333" stroke-width="4"/>
+    ${T(x, y + 82, `VASE ${liters} L`, 10, "middle")}
+  </g>`;
+}
+
+function legendSVG(layout: SchematicLayout) {
+  const { x, y, w, h } = layout.legend;
+  let s = box(x, y, w, h);
+  s += T(x + w / 2, y + 27, "LÉGENDE", 15, "middle", "title");
+
+  s += pipe([{ x: x + 22, y: y + 58 }, { x: x + 78, y: y + 58 }], "pipeBlue");
+  s += T(x + 100, y + 63, "Canalisation pression", 11);
+
+  s += pipe([{ x: x + 22, y: y + 88 }, { x: x + 78, y: y + 88 }], "pipeGreen");
+  s += T(x + 100, y + 93, "PEHD PN10 / arrivée", 11);
+
+  s += `<circle cx="${x + 50}" cy="${y + 119}" r="7" fill="#f47b20" stroke="#111"/>`;
+  s += T(x + 100, y + 124, "Flotteur / niveau", 11);
+
+  s += V(x + 50, y + 151);
+  s += T(x + 100, y + 156, "Vanne d'isolement", 11);
+
+  s += C(x + 50, y + 183);
+  s += T(x + 100, y + 188, "Clapet anti-retour", 11);
+
+  return s;
 }
 
 export function renderSchematic(p: Project, h: HydraulicResult): string {
-  const W=1700,H=980;
-  const tank={x:1180,y:260,w:390,h:360};
-  const pumpY=690, suctionY=790, dischargeY=510;
-  const count=p.pumps.length;
-  const spacing=Math.max(115,Math.min(170,650/Math.max(1,count)));
-  const center=620;
+  const l = calculateLayout(p);
+  const { W, H } = l;
 
-  let s=`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="100%" height="auto" style="display:block;max-width:100%;height:auto" preserveAspectRatio="xMidYMid meet">
+  let s = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="100%" height="auto" preserveAspectRatio="xMidYMid meet">
   <defs>
     <pattern id="pehdPattern" patternUnits="userSpaceOnUse" width="9" height="9" patternTransform="rotate(45)">
       <rect width="9" height="9" fill="#3aa800"/>
       <line x1="0" y1="0" x2="0" y2="9" stroke="#2b7000" stroke-width="3.5"/>
     </pattern>
     <linearGradient id="bluePipe" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#4d6dff"/><stop offset="0.5" stop-color="#1338c9"/><stop offset="1" stop-color="#3554e6"/>
+      <stop offset="0" stop-color="#5b78ff"/><stop offset=".5" stop-color="#143dcb"/><stop offset="1" stop-color="#3554e6"/>
     </linearGradient>
     <linearGradient id="orangePipe" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#ffb066"/><stop offset="0.5" stop-color="#f47b20"/><stop offset="1" stop-color="#e46c14"/>
+      <stop offset="0" stop-color="#ffb066"/><stop offset=".5" stop-color="#f47b20"/><stop offset="1" stop-color="#e46c14"/>
     </linearGradient>
-    <radialGradient id="pumpGrad" cx="35%" cy="30%" r="75%">
-      <stop offset="0" stop-color="#ff5b63"/><stop offset="1" stop-color="#c21620"/>
+    <radialGradient id="pumpGrad" cx="35%" cy="25%" r="80%">
+      <stop offset="0" stop-color="#ff6a72"/><stop offset="1" stop-color="#c21620"/>
     </radialGradient>
+    <linearGradient id="vesselGrad" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#b80f1c"/><stop offset=".45" stop-color="#ef2935"/><stop offset="1" stop-color="#a60d17"/>
+    </linearGradient>
     <linearGradient id="waterGrad" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0" stop-color="#cdeeff"/><stop offset="1" stop-color="#9fd8f7"/>
     </linearGradient>
@@ -108,84 +248,325 @@ export function renderSchematic(p: Project, h: HydraulicResult): string {
     </pattern>
   </defs>
   <style>
-  .txt{font-family:Arial,Helvetica,sans-serif;fill:#1b2430}.title{font-family:Arial,Helvetica,sans-serif;font-weight:700;fill:#101827}
-  .sym{stroke:#111;stroke-width:2;fill:white}
-  .pumpLabel{font-family:Arial,sans-serif;font-size:14px;font-weight:700;fill:#20242b}.box{fill:white;stroke:#6e7784;stroke-width:2}
-  .note{font-family:Arial,sans-serif;fill:#075e9c;font-size:13px}.dim{font-family:Arial,sans-serif;fill:#c21f2b;font-size:16px;font-weight:600}
-  </style><rect width="100%" height="100%" fill="white"/>
-  ${T(W/2,34,p.projectName,25,"middle","title")}
-  ${T(W/2,57,`${p.client} · ${p.location} · ${p.systemType}`,13,"middle")}
+    .txt{font-family:Arial,Helvetica,sans-serif;fill:#1b2430}
+    .title{font-family:Arial,Helvetica,sans-serif;font-weight:700;fill:#101827}
+    .sym{stroke:#111;stroke-width:2.2;fill:#fff}
+    .pumpLabel{font-family:Arial,sans-serif;font-size:13px;font-weight:700;fill:#20242b}
+    .box{fill:#fff;stroke:#697586;stroke-width:2}
+    .note{font-family:Arial,sans-serif;fill:#075e9c;font-size:13px}
+    .dimText{font-family:Arial,sans-serif;fill:#c21f2b;font-size:14px;font-weight:600}
+    .dimension line{stroke:#c21f2b;stroke-width:1.5}
+    .dimension polygon{fill:#c21f2b}
+    .tankText{font-family:Arial,sans-serif;fill:#334155;font-weight:600}
+    .tankCapacity{font-family:Arial,sans-serif;fill:#0f4c81;font-weight:700}
+  </style>
+  <rect width="100%" height="100%" fill="#fff"/>
   `;
 
-  if(p.equipment.controlPanel){
-    s+=`<g>${box(735,75,150,120)}<rect x="755" y="95" width="28" height="16" fill="#fff" stroke="#111"/>`;
-    for(let i=0;i<15;i++){const x=805+(i%3)*28,y=103+Math.floor(i/3)*22;s+=`<circle cx="${x}" cy="${y}" r="6" fill="${i%4===0?"#dc2626":"#16a34a"}" stroke="#111"/>`}
-    s+=T(810,220,"COFFRET DE COMMANDE",11,"middle")+" </g>";
+  s += T(W / 2, 42, p.projectName || "GROUPE DE SURPRESSION", 26, "middle", "title");
+  s += T(W / 2, 66, `${p.client} · ${p.location} · ${p.systemType}`, 13, "middle");
+
+  if (p.equipment.controlPanel) {
+    s += controlPanelSVG(l.controlPanel.x, l.controlPanel.y, l.controlPanel.w, l.controlPanel.h);
   }
 
-  // inlet
-  s+=T(70,105,"ARRIVÉE EAU DE VILLE",15,"start","title");
-  s+=T(70,128,`${p.piping.inletMaterial} / ${p.piping.inletDiameter}`,11);
-  s+=L(80,155,245,155,"pipeGreen")+V(245,155)+L(245,155,500,155,"pipeGreen");
-  s+=T(365,139,"Vanne / réduction",10,"middle");
-  s+=C(500,155)+L(500,155,900,155,"pipeGreen");
-  s+=T(500,130,"Clapet anti-retour",10,"middle");
-  s+=J(900,155)+L(900,155,1180,320,"pipeGreen")+J(1180,320);
+  // ---------------- INLET ----------------
+  s += T(70, 105, "ARRIVÉE EAU DE VILLE", 16, "start", "title");
+  s += T(70, 128, `${p.piping.inletMaterial} / ${p.piping.inletDiameter}`, 11);
 
-  // tank
-  s+=tankSVG(tank);
-  s+=box(tank.x+75,tank.y-90,240,58)+T(tank.x+195,tank.y-64,"CAPACITÉ BÂCHE À EAU",14,"middle","title")+T(tank.x+195,tank.y-42,`${p.tank.capacityM3} m³`,16,"middle","title");
-  s+=dimH(tank.x,tank.x+tank.w,tank.y+tank.h+90,`${p.tank.lengthM.toFixed(2)} m`);
-  s+=dimV(tank.x+tank.w+55,tank.y,tank.y+tank.h,`${p.tank.heightM.toFixed(2)} m`);
-  if(p.equipment.highLevel){s+=L(tank.x+285,tank.y+90,tank.x+285,tank.y+135,"pipeOrange")+T(tank.x+300,tank.y+108,"NIVEAU HAUT",10);}
-  if(p.equipment.lowLevel){s+=L(tank.x+310,tank.y+180,tank.x+310,tank.y+225,"pipeOrange")+T(tank.x+325,tank.y+198,"NIVEAU BAS",10);}
-  if(p.equipment.floatSwitch){s+=`<circle cx="${tank.x+340}" cy="${tank.y+150}" r="7" fill="#f47b20" stroke="#111"/>${T(tank.x+355,tank.y+155,"FLOTTEUR",10)}`;}
-  s+=L(tank.x+75,tank.y+230,tank.x+75,tank.y+130,"pipeBlue")+T(tank.x+90,tank.y+145,`TROP-PLEIN ${p.tank.overflowDiameter}`,10);
-  s+=J(tank.x+195,tank.y+tank.h)+L(tank.x+195,tank.y+tank.h,tank.x+195,tank.y+tank.h+60,"pipeBlue")+T(tank.x+210,tank.y+tank.h+34,`VIDANGE ${p.tank.drainDiameter}`,10);
+  const inletY = l.inlet.y;
+  const inletPath: Point[] = [
+    { x: l.inlet.startX, y: inletY },
+    { x: l.inlet.valveX, y: inletY },
+    { x: l.inlet.checkX, y: inletY },
+    { x: l.inlet.approachX, y: inletY },
+    { x: l.inlet.approachX + 100, y: inletY },
+    { x: l.inlet.approachX + 100, y: l.tank.inlet.y },
+    l.tank.inlet,
+  ];
+  s += pipe(inletPath, "pipeGreen", true);
+  s += V(l.inlet.valveX, inletY);
+  s += C(l.inlet.checkX, inletY);
+  s += T(l.inlet.valveX, inletY - 22, "VANNE", 10, "middle");
+  s += T(l.inlet.checkX, inletY - 22, "CLAPET", 10, "middle");
+  s += T(850, inletY - 18, "PEHD PN10", 10, "middle");
 
-  // suction header
-  s+=L(260,suctionY,1030,suctionY,"pipeBlue")+T(645,suctionY+34,`COLLECTEUR ASPIRATION ${p.piping.suctionDiameter}`,15,"middle","title");
-  s+=T(265,suctionY-15,`${p.piping.suctionMaterial} · L=${p.piping.suctionLengthM} m`,10);
-  s+=J(1030,suctionY)+L(1030,suctionY,tank.x+30,tank.y+tank.h-30,"pipeGreen");
-  if(p.equipment.suctionStrainer){s+=C(1050,suctionY)+T(1050,suctionY-22,"Crépine",10,"middle");}
-  if(p.equipment.drainValve){s+=L(430,suctionY,430,suctionY+45,"pipeBlue")+V(430,suctionY+45)+T(430,suctionY+70,"VIDANGE",9,"middle");}
+  // ---------------- TANK ----------------
+  s += tankSVG(l.tank, p);
+  s += box(l.tank.x + 65, l.tank.y - 92, 250, 62);
+  s += T(l.tank.x + 190, l.tank.y - 66, "CAPACITÉ BÂCHE À EAU", 14, "middle", "title");
+  s += T(l.tank.x + 190, l.tank.y - 44, `${p.tank.capacityM3} m³`, 16, "middle", "title");
 
-  // pumps
-  p.pumps.forEach((pump,i)=>{
-    const x=center+(i-(count-1)/2)*spacing;
-    s+=L(x,suctionY,x,suctionY-92,"pipeBlue");
-    if(p.equipment.isolationValvePerPump){s+=V(x,suctionY-108);}
-    s+=P(x,pumpY,`P${pump.id} · ${pump.duty.toUpperCase()}`);
-    s+=L(x,pumpY-28,x,dischargeY+35,"pipeBlue");
-    if(p.equipment.checkValvePerPump){s+=C(x,dischargeY+18);}
-    if(p.equipment.isolationValvePerPump){s+=V(x,dischargeY-12);}
-    s+=L(x,dischargeY-32,x,dischargeY,"pipeBlue");
-    if(pump.flowM3h>0)s+=T(x,pumpY+75,`${pump.flowM3h} m³/h · ${pump.headM} m`,10,"middle");
+  s += dimH(
+    l.tank.x,
+    l.tank.x + l.tank.w,
+    l.tank.y + l.tank.h + 92,
+    `${p.tank.lengthM.toFixed(2)} m`
+  );
+  s += dimV(
+    l.tank.x + l.tank.w + 58,
+    l.tank.y,
+    l.tank.y + l.tank.h,
+    `${p.tank.heightM.toFixed(2)} m`
+  );
+
+  if (p.equipment.highLevel) {
+    const y = l.tank.y + 95;
+    s += `<line x1="${l.tank.x + 270}" y1="${y}" x2="${l.tank.x + 330}" y2="${y}" stroke="#f47b20" stroke-width="4"/>`;
+    s += T(l.tank.x + 340, y + 4, "NIVEAU HAUT", 10);
+  }
+  if (p.equipment.lowLevel) {
+    const y = l.tank.y + 205;
+    s += `<line x1="${l.tank.x + 270}" y1="${y}" x2="${l.tank.x + 330}" y2="${y}" stroke="#f47b20" stroke-width="4"/>`;
+    s += T(l.tank.x + 340, y + 4, "NIVEAU BAS", 10);
+  }
+  if (p.equipment.floatSwitch) {
+    const x = l.tank.x + l.tank.w - 55;
+    const y = l.tank.y + 155;
+    s += `<circle cx="${x}" cy="${y}" r="8" fill="#f47b20" stroke="#111" stroke-width="1.5"/>`;
+    s += T(x + 16, y + 5, "FLOTTEUR", 10);
+  }
+
+  // Overflow inside tank, routed to left edge.
+  if (p.tank.overflowDiameter) {
+    s += pipe(
+      [
+        l.tank.overflow,
+        { x: l.tank.x + 18, y: l.tank.overflow.y },
+        { x: l.tank.x + 18, y: l.tank.y + 145 },
+      ],
+      "pipeBlue"
+    );
+    s += T(l.tank.x + 38, l.tank.y + 149, `TROP-PLEIN ${p.tank.overflowDiameter}`, 10);
+  }
+
+  // Drain under the tank.
+  s += J(l.tank.drain.x, l.tank.drain.y);
+  s += pipe(
+    [
+      l.tank.drain,
+      { x: l.tank.drain.x, y: l.tank.drain.y + 58 },
+    ],
+    "pipeBlue"
+  );
+  s += T(l.tank.drain.x + 16, l.tank.drain.y + 38, `VIDANGE ${p.tank.drainDiameter}`, 10);
+
+  // ---------------- SUCTION HEADER ----------------
+  s += pipe(
+    [
+      { x: l.suctionHeader.x1, y: l.suctionHeader.y },
+      { x: l.suctionHeader.x2, y: l.suctionHeader.y },
+    ],
+    "pipeBlue"
+  );
+  s += T(
+    (l.suctionHeader.x1 + l.suctionHeader.x2) / 2,
+    l.suctionHeader.y + 38,
+    `COLLECTEUR ASPIRATION ${p.piping.suctionDiameter}`,
+    15,
+    "middle",
+    "title"
+  );
+  s += T(
+    l.suctionHeader.x1 + 5,
+    l.suctionHeader.y - 17,
+    `${p.piping.suctionMaterial} · L=${p.piping.suctionLengthM} m`,
+    10
+  );
+
+  // Tank-to-suction route is orthogonal and never crosses the tank body.
+  s += pipe(
+    [
+      l.tank.suction,
+      { x: l.suctionHeader.tankRouteX, y: l.tank.suction.y },
+      { x: l.suctionHeader.tankRouteX, y: l.suctionHeader.y },
+      { x: l.suctionHeader.x2, y: l.suctionHeader.y },
+    ],
+    "pipeBlue",
+    true
+  );
+
+  if (p.equipment.suctionStrainer) {
+    s += C(l.suctionHeader.tankRouteX - 45, l.suctionHeader.y);
+    s += T(l.suctionHeader.tankRouteX - 45, l.suctionHeader.y - 22, "CRÉPINE", 10, "middle");
+  }
+
+  if (p.equipment.drainValve) {
+    const x = l.suctionHeader.x1 + 165;
+    s += pipe(
+      [
+        { x, y: l.suctionHeader.y },
+        { x, y: l.suctionHeader.y + 42 },
+      ],
+      "pipeBlue"
+    );
+    s += V(x, l.suctionHeader.y + 42, true);
+    s += T(x, l.suctionHeader.y + 70, "VIDANGE", 9, "middle");
+  }
+
+  // ---------------- PUMPS ----------------
+  l.pumps.forEach((pl, i) => {
+    const pump = p.pumps[i];
+
+    // suction branch
+    s += pipe(
+      [
+        { x: pl.x, y: l.suctionHeader.y },
+        { x: pl.x, y: pl.suctionValveY },
+      ],
+      "pipeBlue"
+    );
+
+    if (p.equipment.isolationValvePerPump) {
+      s += V(pl.x, pl.suctionValveY, true);
+    }
+
+    // pump body
+    s += pipe(
+      [
+        { x: pl.x, y: pl.suctionValveY },
+        { x: pl.x, y: pl.pumpY + 61 },
+      ],
+      "pipeBlue"
+    );
+    s += pumpSVG(
+      pl.x,
+      pl.pumpY,
+      `P${pump?.id ?? i + 1} · ${(pump?.duty ?? "service").toUpperCase()}`
+    );
+
+    // discharge branch: pump -> check -> valve -> header
+    s += pipe(
+      [
+        { x: pl.x, y: pl.pumpY - 61 },
+        { x: pl.x, y: pl.checkValveY },
+      ],
+      "pipeBlue"
+    );
+
+    if (p.equipment.checkValvePerPump) {
+      s += C(pl.x, pl.checkValveY, true);
+    }
+
+    if (p.equipment.isolationValvePerPump) {
+      s += V(pl.x, pl.dischargeValveY, true);
+    }
+
+    s += pipe(
+      [
+        { x: pl.x, y: pl.dischargeValveY },
+        { x: pl.x, y: l.dischargeHeader.y },
+      ],
+      "pipeBlue"
+    );
+
+    if (pump && pump.flowM3h > 0) {
+      s += T(
+        pl.x,
+        pl.pumpY + 91,
+        `${pump.flowM3h} m³/h · ${pump.headM} m`,
+        10,
+        "middle"
+      );
+    }
   });
 
-  // discharge header
-  s+=L(260,dischargeY,1030,dischargeY,"pipeBlue")+T(645,dischargeY-22,`COLLECTEUR REFOULEMENT ${p.piping.dischargeDiameter}`,15,"middle","title");
-  s+=T(265,dischargeY-40,`${p.piping.dischargeMaterial} · L=${p.piping.dischargeLengthM} m`,10);
-  s+=J(1030,dischargeY)+L(1030,dischargeY,1030,330,"pipeBlue")+J(1030,330)+L(1030,330,tank.x,330,"pipeBlue")+T(1080,312,`DÉPART RÉSEAU ${p.piping.dischargeDiameter}`,10);
-  if(p.equipment.pressureGauge){s+=`<circle cx="820" cy="${dischargeY-40}" r="14" class="sym"/><circle cx="820" cy="${dischargeY-40}" r="4" fill="#111"/>${T(820,dischargeY-66,"MANOMÈTRE",9,"middle")}`;}
-  if(p.pressure.expansionVesselL>0){s+=`<ellipse cx="315" cy="${dischargeY-85}" rx="35" ry="55" fill="#df1e2a" stroke="#8f1018" stroke-width="3"/><ellipse cx="308" cy="${dischargeY-115}" rx="10" ry="18" fill="#ffffff" opacity="0.25"/>${T(315,dischargeY-150,`VASE ${p.pressure.expansionVesselL} L`,10,"middle")}`;}
+  // ---------------- DISCHARGE HEADER ----------------
+  s += pipe(
+    [
+      { x: l.dischargeHeader.x1, y: l.dischargeHeader.y },
+      { x: l.dischargeHeader.x2, y: l.dischargeHeader.y },
+    ],
+    "pipeBlue"
+  );
+  s += T(
+    (l.dischargeHeader.x1 + l.dischargeHeader.x2) / 2,
+    l.dischargeHeader.y - 24,
+    `COLLECTEUR REFOULEMENT ${p.piping.dischargeDiameter}`,
+    15,
+    "middle",
+    "title"
+  );
+  s += T(
+    l.dischargeHeader.x1 + 5,
+    l.dischargeHeader.y - 43,
+    `${p.piping.dischargeMaterial} · L=${p.piping.dischargeLengthM} m`,
+    10
+  );
 
-  // calculation card
-  s+=box(55,845,420,105);
-  s+=T(72,870,`Q SERVICE : ${h.dutyFlowM3h.toFixed(1)} m³/h`,13,"start","note");
-  s+=T(72,893,`HMT ESTIMÉE : ${h.estimatedTotalHeadM.toFixed(1)} m`,13,"start","note");
-  s+=T(72,916,`VITESSE ASP. : ${h.suctionVelocityMS.toFixed(2)} m/s · REFOU. : ${h.dischargeVelocityMS.toFixed(2)} m/s`,11,"start","note");
-  s+=T(72,938,`DIAMÈTRES CONSEILLÉS : ${h.recommendedSuctionDiameter} / ${h.recommendedDischargeDiameter}`,11,"start","note");
+  // Outlet routed ABOVE the tank to avoid crossing the tank.
+  s += pipe(
+    [
+      { x: l.dischargeHeader.x2, y: l.dischargeHeader.y },
+      { x: l.dischargeHeader.outletX, y: l.dischargeHeader.y },
+      { x: l.dischargeHeader.outletX, y: 220 },
+      { x: 1680, y: 220 },
+    ],
+    "pipeBlue",
+    true
+  );
+  s += T(1410, 201, `DÉPART RÉSEAU ${p.piping.dischargeDiameter}`, 11, "middle", "title");
 
-  // legend
-  const lx=1190,ly=690;
-  s+=box(lx,ly,390,160)+T(lx+195,ly+24,"LÉGENDE",14,"middle","title");
-  s+=L(lx+20,ly+45,lx+70,ly+45,"pipeBlue")+T(lx+90,ly+54,"Canalisation pression",11);
-  s+=L(lx+20,ly+73,lx+70,ly+73,"pipeGreen")+T(lx+90,ly+82,"PEHD PN10",11);
-  s+=`<circle cx="${lx+45}" cy="${ly+106}" r="7" fill="#f47b20" stroke="#111"/>${T(lx+90,ly+110,"Flotteur / niveau",11)}`;
-  s+=V(lx+45,ly+132)+T(lx+90,ly+136,"Vanne d'isolement",11);
-  s+=C(lx+45,ly+158)+T(lx+90,ly+162,"Clapet anti-retour",11);
+  if (p.equipment.pressureGauge) {
+    s += gaugeSVG(l.pressureGauge.x, l.pressureGauge.y);
+    s += pipe(
+      [
+        { x: l.pressureGauge.x, y: l.dischargeHeader.y },
+        { x: l.pressureGauge.x, y: l.pressureGauge.y + 20 },
+      ],
+      "pipeBlue"
+    );
+  }
 
-  s+="</svg>";
+  if (p.pressure.expansionVesselL > 0) {
+    s += vesselSVG(
+      l.expansionVessel.x,
+      l.expansionVessel.y,
+      p.pressure.expansionVesselL
+    );
+    s += pipe(
+      [
+        { x: l.expansionVessel.x, y: l.dischargeHeader.y },
+        { x: l.expansionVessel.x, y: l.expansionVessel.y + 54 },
+      ],
+      "pipeBlue"
+    );
+  }
+
+  // ---------------- CALCULATION CARD ----------------
+  const c = l.calculationCard;
+  s += box(c.x, c.y, c.w, c.h);
+  s += T(c.x + 18, c.y + 26, `Q SERVICE : ${h.dutyFlowM3h.toFixed(1)} m³/h`, 13, "start", "note");
+  s += T(c.x + 18, c.y + 49, `HMT ESTIMÉE : ${h.estimatedTotalHeadM.toFixed(1)} m`, 13, "start", "note");
+  s += T(
+    c.x + 18,
+    c.y + 72,
+    `VITESSE ASP. : ${h.suctionVelocityMS.toFixed(2)} m/s · REFOU. : ${h.dischargeVelocityMS.toFixed(2)} m/s`,
+    11,
+    "start",
+    "note"
+  );
+  s += T(
+    c.x + 18,
+    c.y + 94,
+    `DIAMÈTRES CONSEILLÉS : ${h.recommendedSuctionDiameter} / ${h.recommendedDischargeDiameter}`,
+    11,
+    "start",
+    "note"
+  );
+
+  // ---------------- LEGEND ----------------
+  s += legendSVG(l);
+
+  // Engineering note
+  s += T(
+    860,
+    1010,
+    "Schéma de principe — vérifier courbes constructeur, normes applicables et implantation chantier.",
+    10,
+    "middle"
+  );
+
+  s += `</svg>`;
   return s;
 }
