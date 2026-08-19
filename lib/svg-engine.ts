@@ -24,19 +24,16 @@ const L = (x1:number,y1:number,x2:number,y2:number,cls="pipeBlue") => {
 // small flange/elbow marker at pipe joints and direction changes
 const J = (x:number,y:number) => `<rect x="${x-5}" y="${y-5}" width="10" height="10" fill="#222" stroke="#000" stroke-width="0.5" rx="1"/>`;
 
-// isolation valve — bowtie with flange caps
+// isolation valve — clean bowtie (no flanges, crisper at small scale)
 const V = (x:number,y:number) => `<g class="sym">
-  <rect x="${x-16}" y="${y-3}" width="6" height="6" fill="#fff" stroke="#111" stroke-width="1.5"/>
-  <path d="M${x-9} ${y-11}L${x} ${y}L${x-9} ${y+11}Z" fill="#fff" stroke="#111" stroke-width="2"/>
-  <path d="M${x+9} ${y-11}L${x} ${y}L${x+9} ${y+11}Z" fill="#fff" stroke="#111" stroke-width="2"/>
-  <rect x="${x+10}" y="${y-3}" width="6" height="6" fill="#fff" stroke="#111" stroke-width="1.5"/>
+  <path d="M${x-11} ${y-12}L${x} ${y}L${x-11} ${y+12}Z" fill="#fff" stroke="#111" stroke-width="2.2"/>
+  <path d="M${x+11} ${y-12}L${x} ${y}L${x+11} ${y+12}Z" fill="#fff" stroke="#111" stroke-width="2.2"/>
 </g>`;
 
-// check valve — triangle + stop bar with flange cap
+// check valve — triangle + stop bar
 const C = (x:number,y:number) => `<g class="sym">
-  <rect x="${x-14}" y="${y-3}" width="5" height="6" fill="#fff" stroke="#111" stroke-width="1.5"/>
-  <path d="M${x-9} ${y-10}L${x+8} ${y}L${x-9} ${y+10}Z" fill="#fff" stroke="#111" stroke-width="2"/>
-  <line x1="${x+10}" y1="${y-12}" x2="${x+10}" y2="${y+12}" stroke="#111" stroke-width="2.5"/>
+  <path d="M${x-10} ${y-11}L${x+9} ${y}L${x-10} ${y+11}Z" fill="#fff" stroke="#111" stroke-width="2.2"/>
+  <line x1="${x+10}" y1="${y-13}" x2="${x+10}" y2="${y+13}" stroke="#111" stroke-width="2.6"/>
 </g>`;
 
 // pump with radial shading
@@ -87,7 +84,7 @@ export function renderSchematic(p: Project, h: HydraulicResult): string {
   const spacing=Math.max(115,Math.min(170,650/Math.max(1,count)));
   const center=620;
 
-  let s=`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}">
+  let s=`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="100%" height="auto" style="display:block;max-width:100%;height:auto" preserveAspectRatio="xMidYMid meet">
   <defs>
     <pattern id="pehdPattern" patternUnits="userSpaceOnUse" width="9" height="9" patternTransform="rotate(45)">
       <rect width="9" height="9" fill="#3aa800"/>
@@ -138,8 +135,8 @@ export function renderSchematic(p: Project, h: HydraulicResult): string {
   // tank
   s+=tankSVG(tank);
   s+=box(tank.x+75,tank.y-90,240,58)+T(tank.x+195,tank.y-64,"CAPACITÉ BÂCHE À EAU",14,"middle","title")+T(tank.x+195,tank.y-42,`${p.tank.capacityM3} m³`,16,"middle","title");
-  s+=dimH(tank.x,tank.x+tank.w,tank.y+tank.h+45,`${p.tank.lengthM.toFixed(2)} m`);
-  s+=dimV(tank.x+tank.w+95,tank.y,tank.y+tank.h,`${p.tank.heightM.toFixed(2)} m`);
+  s+=dimH(tank.x,tank.x+tank.w,tank.y+tank.h+90,`${p.tank.lengthM.toFixed(2)} m`);
+  s+=dimV(tank.x+tank.w+55,tank.y,tank.y+tank.h,`${p.tank.heightM.toFixed(2)} m`);
   if(p.equipment.highLevel){s+=L(tank.x+285,tank.y+90,tank.x+285,tank.y+135,"pipeOrange")+T(tank.x+300,tank.y+108,"NIVEAU HAUT",10);}
   if(p.equipment.lowLevel){s+=L(tank.x+310,tank.y+180,tank.x+310,tank.y+225,"pipeOrange")+T(tank.x+325,tank.y+198,"NIVEAU BAS",10);}
   if(p.equipment.floatSwitch){s+=`<circle cx="${tank.x+340}" cy="${tank.y+150}" r="7" fill="#f47b20" stroke="#111"/>${T(tank.x+355,tank.y+155,"FLOTTEUR",10)}`;}
