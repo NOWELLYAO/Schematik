@@ -128,7 +128,7 @@ export function calculateLayout(p: Project): SchematicLayout {
       outletY: 350,
     },
     pumps,
-    controlPanel: { x: 760, y: 72, w: 170, h: 132 },
+    controlPanel: { x: 760, y: 72, w: 170, h: 88 },
     expansionVessel: { x: 335, y: 450 },
     pressureGauge: { x: 865, y: dischargeY - 52 },
     legend: { x: 1260, y: 735, w: 430, h: 220 },

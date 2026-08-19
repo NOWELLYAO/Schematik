@@ -268,6 +268,8 @@ export function renderSchematic(p: Project, h: HydraulicResult): string {
 
   if (p.equipment.controlPanel) {
     s += controlPanelSVG(l.controlPanel.x, l.controlPanel.y, l.controlPanel.w, l.controlPanel.h);
+    const cpx = l.controlPanel.x + l.controlPanel.w / 2;
+    s += `<line x1="${cpx}" y1="${l.controlPanel.y + l.controlPanel.h}" x2="${cpx}" y2="${l.inlet.y}" stroke="#697586" stroke-width="2" stroke-dasharray="4 3"/>`;
   }
 
   // ---------------- INLET ----------------
@@ -494,18 +496,19 @@ export function renderSchematic(p: Project, h: HydraulicResult): string {
     10
   );
 
-  // Outlet routed ABOVE the tank to avoid crossing the tank.
+  // Outlet routed ABOVE both the tank and the "CAPACITÉ BÂCHE À EAU" label box.
+  const outletY = Math.min(175, l.tank.y - 92 - 25);
   s += pipe(
     [
       { x: l.dischargeHeader.x2, y: l.dischargeHeader.y },
       { x: l.dischargeHeader.outletX, y: l.dischargeHeader.y },
-      { x: l.dischargeHeader.outletX, y: 220 },
-      { x: 1680, y: 220 },
+      { x: l.dischargeHeader.outletX, y: outletY },
+      { x: 1680, y: outletY },
     ],
     "pipeBlue",
     true
   );
-  s += T(1410, 201, `DÉPART RÉSEAU ${p.piping.dischargeDiameter}`, 11, "middle", "title");
+  s += T(1410, outletY - 19, `DÉPART RÉSEAU ${p.piping.dischargeDiameter}`, 11, "middle", "title");
 
   if (p.equipment.pressureGauge) {
     s += gaugeSVG(l.pressureGauge.x, l.pressureGauge.y);
